@@ -27,7 +27,7 @@ TEX_FILE = Path("practical3.tex")
 
 # `think: False` requests Qwen's non-thinking mode. Prompts ask only for
 # concise, observable rationale summaries rather than hidden reasoning.
-GENERATION_OPTIONS = {"temperature": 0, "num_predict": 180, "think": False}
+GENERATION_OPTIONS = {"temperature": 0, "num_predict": 220}
 
 
 class BusinessClassifier(dspy.Signature):
@@ -126,6 +126,7 @@ def direct_ollama_call(client, prompt):
             {"role": "user", "content": prompt},
         ],
         options=GENERATION_OPTIONS,
+        think=False,
     )
     elapsed = time.perf_counter() - started
     return visible_text(get_chat_content(response)), elapsed
@@ -419,7 +420,7 @@ def build_latex(results):
 \lstdefinestyle{code}{basicstyle=\ttfamily\scriptsize,backgroundcolor=\color{shade},frame=single,rulecolor=\color{accent!45},framesep=5pt,breaklines=true,columns=fullflexible,aboveskip=3pt,belowskip=4pt}
 \begin{document}
 \begin{center}
-{\small\color{accent}\sffamily GENERATIVE AI LABORATORY}\[-2pt]
+{\small\color{accent}\sffamily GENERATIVE AI LABORATORY}\\[-2pt]
 {\color{accent}\rule{\linewidth}{0.65pt}}\\[-1pt]
 {\large\bfseries PRACTICAL NO. 3}\\[2pt]
 {\LARGE\bfseries Declarative Prompt Programming using CoT, ToT, ReAct and DSPy}\\[4pt]
