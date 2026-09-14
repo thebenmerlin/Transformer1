@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python practical2_tokenization_embeddings.py 2>&1 | tee practical2_output.txt
+          python -u practical2_tokenization_embeddings.py 2>&1 | tee practical2_output.txt
 
       - name: Upload Practical 2 results
         if: always()
