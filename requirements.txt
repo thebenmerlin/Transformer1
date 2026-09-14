@@ -1,2 +1,6 @@
 ollama
 psutil
+transformers
+sentence-transformers
+scikit-learn
+torch

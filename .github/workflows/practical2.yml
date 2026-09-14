@@ -1,0 +1,56 @@
+name: GenAI Practical 2 - Tokenization and Embeddings
+
+on:
+  workflow_dispatch:
+
+jobs:
+  practical2:
+    name: tokenization and semantic similarity
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Print runner environment information
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Operating system:"
+          uname -a
+          echo "CPU architecture: $(uname -m)"
+          echo "System Python before setup:"
+          python3 --version
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Practical 2 dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python --version
+
+      - name: Execute Practical 2 and save complete console output
+        shell: bash
+        run: |
+          set -o pipefail
+          python practical2_tokenization_embeddings.py 2>&1 | tee practical2_output.txt
+
+      - name: Upload Practical 2 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenAI-Practical-2-RBT23AR001
+          path: |
+            practical2_output.txt
+            practical2_results.csv
+            practical2_embeddings_summary.csv
+          if-no-files-found: warn
