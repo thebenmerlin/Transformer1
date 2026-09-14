@@ -4,3 +4,4 @@ transformers
 sentence-transformers
 scikit-learn
 torch
+dspy
