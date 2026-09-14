@@ -1,0 +1,125 @@
+name: GenAI Practical 1 - Ollama 8B Benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  practical1:
+    name: llama3 8B benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Print runner information before model download
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Runner information ==="
+          uname -a
+          echo "Architecture: $(uname -m)"
+          echo "CPU information:"
+          lscpu
+          echo "Memory information:"
+          free -h
+          echo "Disk information:"
+          df -h
+          echo "Python version:"
+          python3 --version
+
+      - name: Install Ollama on the GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama and wait for its API
+        shell: bash
+        run: |
+          set -euo pipefail
+          ollama serve > ollama-server.log 2>&1 &
+          echo "OLLAMA_PID=$!" >> "$GITHUB_ENV"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:11434/api/version; then
+              echo
+              echo "Ollama API is responding."
+              exit 0
+            fi
+            echo "Waiting for Ollama API (attempt $attempt/30)..."
+            sleep 2
+          done
+          echo "Ollama failed to start. Server log follows:" >&2
+          cat ollama-server.log >&2 || true
+          exit 1
+
+      - name: Verify Ollama and show capacity before model pull
+        shell: bash
+        run: |
+          set -euo pipefail
+          ollama --version
+          echo "=== Disk before pull ==="
+          df -h
+          echo "=== RAM before pull ==="
+          free -h
+
+      - name: Pull the required model on this ephemeral runner only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ollama pull llama3:8b
+          echo "=== Ollama model list ==="
+          ollama list
+          echo "=== Disk after pull ==="
+          df -h
+          echo "=== RAM after pull ==="
+          free -h
+
+      - name: Install Python benchmark dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: Warm up llama3 8B and show loaded processor allocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ollama run llama3:8b "Reply only with: warm up complete." --keepalive 15m; then
+            echo "ERROR: llama3:8b could not execute on this runner. Check the preceding Ollama error for memory or disk-capacity limitations." >&2
+            exit 1
+          fi
+          echo "=== Ollama loaded model status ==="
+          ollama ps
+
+      - name: Run benchmark and save complete output
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 practical1_ollama_benchmark.py 2>&1 | tee practical1_output.txt
+
+      - name: Print final runner diagnostics
+        if: always()
+        shell: bash
+        run: |
+          echo "=== Final disk information ==="
+          df -h || true
+          echo "=== Final RAM information ==="
+          free -h || true
+          echo "=== Final Ollama status ==="
+          ollama ps || true
+          echo "=== Ollama server log (last 100 lines) ==="
+          tail -n 100 ollama-server.log || true
+
+      - name: Upload benchmark output and CSV artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenAI-Practical-1-RBT23AR001
+          path: |
+            practical1_output.txt
+            practical1_results.csv
+            ollama-server.log
+          if-no-files-found: warn
