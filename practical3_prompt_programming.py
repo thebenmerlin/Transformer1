@@ -7,6 +7,7 @@ GitHub Actions workflow starts that endpoint on an ephemeral runner.
 
 import csv
 import importlib.metadata
+import json
 import platform
 import re
 import subprocess
@@ -28,6 +29,41 @@ TEX_FILE = Path("practical3.tex")
 # `think: False` requests Qwen's non-thinking mode. Prompts ask only for
 # concise, observable rationale summaries rather than hidden reasoning.
 GENERATION_OPTIONS = {"temperature": 0, "num_predict": 220}
+
+COT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "factors_considered": {"type": "array", "items": {"type": "string"}},
+        "short_rationale": {"type": "string"},
+        "final_classification": {"type": "string"},
+    },
+    "required": ["factors_considered", "short_rationale", "final_classification"],
+}
+
+TOT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "candidate_1": {"type": "string"},
+        "candidate_2": {"type": "string"},
+        "candidate_3": {"type": "string"},
+        "brief_evaluation": {"type": "string"},
+        "selected_classification": {"type": "string"},
+    },
+    "required": [
+        "candidate_1", "candidate_2", "candidate_3", "brief_evaluation", "selected_classification"
+    ],
+}
+
+REACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning_summary": {"type": "string"},
+        "action": {"type": "string"},
+        "observation": {"type": "string"},
+        "final_answer": {"type": "string"},
+    },
+    "required": ["reasoning_summary", "action", "observation", "final_answer"],
+}
 
 
 class BusinessClassifier(dspy.Signature):
@@ -109,7 +145,7 @@ def get_chat_content(response):
     return response.message.content
 
 
-def direct_ollama_call(client, prompt):
+def direct_ollama_call(client, prompt, response_schema):
     started = time.perf_counter()
     response = client.chat(
         model=MODEL,
@@ -127,16 +163,54 @@ def direct_ollama_call(client, prompt):
         ],
         options=GENERATION_OPTIONS,
         think=False,
+        format=response_schema,
     )
     elapsed = time.perf_counter() - started
     return visible_text(get_chat_content(response)), elapsed
 
 
-def extract_labeled_value(text, label):
-    match = re.search(rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+?)\s*$", text)
-    if match:
-        return match.group(1).strip(" `*#")
-    return "Label not parsed; see generated response"
+def parse_json_response(raw_response, expected_fields):
+    """Validate an actual local-model JSON response before using it."""
+    try:
+        parsed = json.loads(raw_response)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"Model did not return valid requested JSON: {error}") from error
+    missing = [field for field in expected_fields if not str(parsed.get(field, "")).strip()]
+    if missing:
+        raise RuntimeError(f"Model JSON omitted required output fields: {', '.join(missing)}")
+    return parsed
+
+
+def format_cot_output(data):
+    factors = data["factors_considered"]
+    if not isinstance(factors, list) or len(factors) < 2:
+        raise RuntimeError("Model JSON did not provide the two requested CoT factors.")
+    return (
+        "Factors Considered:\n"
+        f"- {factors[0]}\n"
+        f"- {factors[1]}\n"
+        f"Short Rationale: {data['short_rationale']}\n"
+        f"Final Classification: {data['final_classification']}"
+    )
+
+
+def format_tot_output(data):
+    return (
+        f"Candidate 1: {data['candidate_1']}\n"
+        f"Candidate 2: {data['candidate_2']}\n"
+        f"Candidate 3: {data['candidate_3']}\n"
+        f"Brief Evaluation: {data['brief_evaluation']}\n"
+        f"Selected Classification: {data['selected_classification']}"
+    )
+
+
+def format_react_output(data):
+    return (
+        f"Reasoning Summary: {data['reasoning_summary']}\n"
+        f"Action: {data['action']}\n"
+        f"Observation: {data['observation']}\n"
+        f"Final Answer: {data['final_answer']}"
+    )
 
 
 def print_environment():
@@ -156,62 +230,71 @@ def run_part_a(client):
     cot_scenario = "Company: Annual Revenue = $5 Million; Employees = 150; Sector = Healthcare."
     cot_prompt = f"""Classify this illustrative business-size scenario: {cot_scenario}
 
-Return exactly these visible sections. Do not provide hidden chain-of-thought.
-Factors Considered:
-- factor 1
-- factor 2
-Short Rationale: one or two concise sentences.
-Final Classification: one concise category.
+Return only JSON matching the supplied schema. Use two short factors, a
+one-sentence external rationale, and one concise final category. Do not expose
+private reasoning and do not add any text outside the JSON object.
 """
     print("=== Part A: CoT ===")
     print(f"Input Scenario: {cot_scenario}")
     print("Exact Prompt:")
     print(cot_prompt.strip())
-    cot_output, cot_time = direct_ollama_call(client, cot_prompt)
-    cot_classification = extract_labeled_value(cot_output, "Final Classification")
-    print("Generated Output:")
+    cot_raw, cot_time = direct_ollama_call(client, cot_prompt, COT_SCHEMA)
+    cot_data = parse_json_response(
+        cot_raw, ["factors_considered", "short_rationale", "final_classification"]
+    )
+    cot_output = format_cot_output(cot_data)
+    cot_classification = str(cot_data["final_classification"]).strip()
+    print("Exact Generated JSON:")
+    print(cot_raw)
+    print("Visible Structured Output:")
     print(cot_output)
     print(f"Execution Time: {cot_time:.3f} s\n")
 
     tot_scenario = "Revenue = $2 Million; Employees = 80; Sector = Retail."
     tot_prompt = f"""For this illustrative business-size scenario: {tot_scenario}
 
-Propose and compare three candidates. Return exactly these visible labels and
-keep the evaluation concise. Do not provide hidden chain-of-thought.
-Candidate 1: category - brief consideration
-Candidate 2: category - brief consideration
-Candidate 3: category - brief consideration
-Brief Evaluation: concise comparison of the candidates.
-Selected Classification: one concise category.
+Return only JSON matching the supplied schema. Each candidate should combine a
+short category and brief consideration. Briefly compare candidates and select
+one category. Do not expose private reasoning or add text outside JSON.
 """
     print("=== Part A: ToT ===")
     print(f"Input Scenario: {tot_scenario}")
     print("Exact Prompt:")
     print(tot_prompt.strip())
-    tot_output, tot_time = direct_ollama_call(client, tot_prompt)
-    tot_classification = extract_labeled_value(tot_output, "Selected Classification")
-    print("Generated Output:")
+    tot_raw, tot_time = direct_ollama_call(client, tot_prompt, TOT_SCHEMA)
+    tot_data = parse_json_response(
+        tot_raw,
+        ["candidate_1", "candidate_2", "candidate_3", "brief_evaluation", "selected_classification"],
+    )
+    tot_output = format_tot_output(tot_data)
+    tot_classification = str(tot_data["selected_classification"]).strip()
+    print("Exact Generated JSON:")
+    print(tot_raw)
+    print("Visible Structured Output:")
     print(tot_output)
     print(f"Execution Time: {tot_time:.3f} s\n")
 
     react_scenario = "Employees = 500; Annual Revenue = $50 Million."
     react_prompt = f"""For this illustrative business-size scenario: {react_scenario}
 
-Use only this observable ReAct-style format. The action is an internal
-characteristics evaluation, not a web or tool call. Do not provide hidden
-chain-of-thought.
-Reasoning Summary: brief summary of relevant factors.
-Action: evaluate company scale using the stated employees and revenue.
-Observation: concise outcome of that evaluation.
-Final Answer: one concise business-size category.
+Return only JSON matching the supplied schema. The action must describe only
+evaluation of the stated characteristics, never a web or external-tool call.
+All strings must be concise observable summaries; do not expose private
+reasoning or add text outside JSON.
 """
     print("=== Part A: ReAct ===")
     print(f"Input Scenario: {react_scenario}")
     print("Exact Prompt:")
     print(react_prompt.strip())
-    react_output, react_time = direct_ollama_call(client, react_prompt)
-    react_classification = extract_labeled_value(react_output, "Final Answer")
-    print("Generated Output:")
+    react_raw, react_time = direct_ollama_call(client, react_prompt, REACT_SCHEMA)
+    react_data = parse_json_response(
+        react_raw, ["reasoning_summary", "action", "observation", "final_answer"]
+    )
+    react_output = format_react_output(react_data)
+    react_classification = str(react_data["final_answer"]).strip()
+    print("Exact Generated JSON:")
+    print(react_raw)
+    print("Visible Structured Output:")
     print(react_output)
     print(f"Execution Time: {react_time:.3f} s\n")
 
